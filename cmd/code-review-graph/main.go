@@ -12,6 +12,7 @@ import (
 
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
+	"github.com/harshsharma/code-review-graph-go/internal/mcp"
 	"github.com/harshsharma/code-review-graph-go/internal/visualization"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,7 @@ func main() {
 		watchCmd(),
 		detectChangesCmd(),
 		visualizeCmd(),
+		serveCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -294,6 +296,31 @@ func visualizeCmd() *cobra.Command {
 	return cmd
 }
 
+func serveCmd() *cobra.Command {
+	var repoPath string
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the MCP server (stdio transport)",
+		Long:  "Start the Model Context Protocol server for AI coding tool integration. Communicates over stdin/stdout using JSON-RPC 2.0.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+			repoRoot := incremental.FindProjectRoot(repoPath)
+			dbPath := incremental.GetDBPath(repoRoot)
+
+			store, err := graph.NewStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer store.Close()
+
+			srv := mcp.NewServer(store, repoRoot)
+			return srv.Run(context.Background())
+		},
+	}
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (auto-detected)")
+	return cmd
+}
+
 func setupLogging() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -334,11 +361,12 @@ func banner() string {
     %sstatus%s      Show graph statistics
     %svisualize%s   Generate interactive HTML graph
     %sdetect-changes%s Analyze change impact %s(risk-scored review)%s
+    %sserve%s       Start MCP server %s(stdio transport)%s
     %sversion%s     Show version
 
   %sRun%s %scode-review-graph <command> --help%s %sfor details%s
 `, c, r, c, r, b, r, d, version, r, c, y, c, r, c, r, d, r, c, r, d, r,
-		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r, g, r,
+		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r, g, r, d, r, g, r,
 		d, r, b, r, d, r)
 }
 

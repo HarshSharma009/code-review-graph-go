@@ -33,7 +33,7 @@ This is a Go port of [code-review-graph](https://github.com/tirth8205/code-revie
 
 | Package | Path | Description |
 |---------|------|-------------|
-| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: build, update, status, watch, detect-changes, visualize, version |
+| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: build, update, status, watch, detect-changes, visualize, serve, version |
 | **Visualization** | `internal/visualization/` | D3.js interactive HTML graph generator with force layout, search, tooltips |
 | **Config** | `internal/config/config.go` | Environment-driven configuration (CRG_* vars), limits, ignore patterns |
 | **Graph Store** | `internal/graph/` | SQLite-backed graph (nodes, edges, metadata), schema migrations v1→v6, BFS impact radius via recursive CTE, batch queries, FTS5 search |
@@ -82,6 +82,7 @@ Edge kinds: `CALLS`, `IMPORTS_FROM`, `INHERITS`, `IMPLEMENTS`, `CONTAINS`, `TEST
 | `context.Context` | Cancellation propagated through all goroutines |
 | `sync.Mutex` | Parser instance pool (one per goroutine) |
 | `time.AfterFunc` | Watch mode debounce (300ms) |
+| `sync.Mutex` | MCP server stdio write serialisation |
 
 **SQLite write serialisation**: all writes go through a `sync.Mutex` in `Store`. Reads use the `sql.DB` connection pool (concurrent readers in WAL mode).
 
@@ -97,6 +98,7 @@ CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" go build -o bin/code-review-grap
 ./bin/code-review-graph status                      # Show graph stats
 ./bin/code-review-graph watch                       # fsnotify-based watch mode
 ./bin/code-review-graph detect-changes [--brief]    # Risk-scored change impact
+./bin/code-review-graph serve [--repo PATH]         # Start MCP server (stdio)
 ./bin/code-review-graph version                     # Show version
 
 # Development
@@ -139,7 +141,7 @@ code-review-graph-go/
 ├── cmd/
 │   ├── code-review-graph/   # CLI binary
 │   │   └── main.go
-│   └── mcp-server/          # MCP stdio server (planned)
+│   └── mcp-server/          # Standalone MCP binary (alternative to `serve` subcommand)
 │       └── main.go
 ├── internal/
 │   ├── config/              # Environment config, constants
@@ -157,9 +159,13 @@ code-review-graph-go/
 │   │   ├── builder.go
 │   │   ├── git.go
 │   │   └── watcher.go
+│   ├── mcp/                 # MCP JSON-RPC server (stdio transport)
+│   │   ├── server.go
+│   │   └── server_test.go
+│   ├── tools/               # MCP tool handlers (10 tools)
+│   │   └── tools.go
 │   ├── search/              # FTS5 + vector hybrid search (planned)
-│   ├── visualization/       # D3.js HTML generator (planned)
-│   ├── tools/               # MCP tool implementations (planned)
+│   ├── visualization/       # D3.js HTML generator
 │   ├── community/           # Community detection (planned)
 │   ├── wiki/                # Markdown wiki generator (planned)
 │   └── registry/            # Multi-repo registry (planned)
@@ -238,11 +244,13 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [x] `visualize` CLI command with optional `--serve` HTTP server
 - [x] Edge target resolution via name index (short names → qualified names)
 - [x] Test suite: 15 tests covering graph store CRUD, metadata, search, parser (Python, Go, JS), language detection, hashing, test function detection
+- [x] MCP server with stdio transport (JSON-RPC 2.0, Content-Length framing)
+- [x] 10 MCP tools: build_or_update_graph, get_minimal_context, get_impact_radius, query_graph, semantic_search_nodes, list_graph_stats, find_large_functions, get_review_context, detect_changes, visualize_graph
+- [x] `serve` CLI command for starting MCP server
+- [x] MCP server test suite: 8 tests (initialize, tools/list, tool calls, error handling)
 
 ### 🚧 Planned
-
-- [ ] MCP server with stdio transport (`cmd/mcp-server/`)
-- [ ] MCP tool implementations (22 tools)
+- [ ] Additional MCP tools (flows, communities, wiki, refactor, registry, embeddings)
 - [ ] FTS5-powered search API (`internal/search/`)
 - [ ] Community detection (`internal/community/`)
 - [ ] Wiki generation (`internal/wiki/`)
