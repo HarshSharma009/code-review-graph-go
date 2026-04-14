@@ -33,7 +33,7 @@ This is a Go port of [code-review-graph](https://github.com/tirth8205/code-revie
 
 | Package | Path | Description |
 |---------|------|-------------|
-| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: build, update, postprocess, status, watch, detect-changes, visualize, wiki, register, unregister, repos, serve, version |
+| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: install, init, build, update, postprocess, status, watch, detect-changes, visualize, wiki, register, unregister, repos, serve, version |
 | **Visualization** | `internal/visualization/` | D3.js interactive HTML graph generator with force layout, search, tooltips |
 | **Config** | `internal/config/config.go` | Environment-driven configuration (CRG_* vars), limits, ignore patterns |
 | **Graph Store** | `internal/graph/` | SQLite-backed graph (nodes, edges, metadata), schema migrations v1→v6, BFS impact radius via recursive CTE, batch queries, FTS5 search |
@@ -44,6 +44,9 @@ This is a Go port of [code-review-graph](https://github.com/tirth8205/code-revie
 | **Refactor** | `internal/refactor/` | Graph-powered rename preview, dead code detection, community-driven move suggestions, apply with path-traversal safety |
 | **Embeddings** | `internal/embeddings/` | Vector embedding store (SQLite), cosine similarity search, provider interface for future backends |
 | **Registry** | `internal/registry/` | Multi-repo JSON registry (~/.code-review-graph/registry.json), register/unregister/list/cross-repo search |
+| **Skills** | `internal/skills/` | Multi-platform MCP config installer (Claude, Cursor, Windsurf, Zed, Continue, OpenCode), skill files, hooks, git pre-commit hook, CLAUDE.md injection |
+| **Prompts** | `internal/prompts/` | 5 MCP prompt templates (review_changes, architecture_map, debug_issue, onboard_developer, pre_merge_check) |
+| **Hints** | `internal/hints/` | Context-aware next-step suggestions, session state tracking, intent inference (reviewing/debugging/refactoring/exploring) |
 
 ### Implemented Languages (17)
 
@@ -98,6 +101,8 @@ Edge kinds: `CALLS`, `IMPORTS_FROM`, `INHERITS`, `IMPLEMENTS`, `CONTAINS`, `TEST
 CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" go build -o bin/code-review-graph ./cmd/code-review-graph
 
 # Use
+./bin/code-review-graph install [--platform all]    # Full setup (MCP, skills, hooks, CLAUDE.md)
+./bin/code-review-graph init [--platform all]      # MCP server config only
 ./bin/code-review-graph build [--repo PATH]        # Full parallel graph build
 ./bin/code-review-graph update [--base HEAD~1]      # Incremental update (changed files only)
 ./bin/code-review-graph status                      # Show graph stats
@@ -184,6 +189,12 @@ code-review-graph-go/
 │   │   └── embeddings.go
 │   ├── registry/            # Multi-repo JSON registry
 │   │   └── registry.go
+│   ├── skills/              # Platform MCP installer + skill files
+│   │   └── skills.go
+│   ├── prompts/             # MCP prompt templates
+│   │   └── prompts.go
+│   ├── hints/               # Context-aware next-step suggestions
+│   │   └── hints.go
 │   ├── visualization/       # D3.js HTML generator
 │   │   └── visualization.go
 ├── tests/
@@ -272,9 +283,12 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [x] Multi-repo registry: JSON-based registry at ~/.code-review-graph/registry.json, register/unregister/list/find-by-alias/find-by-path, cross-repo search
 - [x] 18 MCP tools: original 10 + list_flows, get_flow, get_affected_flows, refactor, apply_refactor, find_dead_code, generate_wiki, get_wiki_page
 - [x] CLI commands: postprocess, wiki, register, unregister, repos
+- [x] Skills: multi-platform MCP config installer (6 platforms), 4 skill markdown files, hooks config, git pre-commit hook, CLAUDE.md injection, platform instruction files
+- [x] 5 MCP prompt templates: review_changes, architecture_map, debug_issue, onboard_developer, pre_merge_check
+- [x] Context-aware hints: session state tracking, intent inference, workflow-driven next-step suggestions appended as `_hints` to tool responses
+- [x] CLI commands: install (full setup), init (MCP config only)
 
 ### 🚧 Planned
 - [ ] Community detection algorithm (`internal/community/`)
-- [ ] MCP prompts (review_changes, architecture_map, debug_issue, onboard_developer, pre_merge_check)
 - [ ] CI pipeline (GitHub Actions)
 - [ ] GoReleaser for pre-built binaries

@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
+	"github.com/harshsharma/code-review-graph-go/internal/hints"
+	"github.com/harshsharma/code-review-graph-go/internal/prompts"
 	"github.com/harshsharma/code-review-graph-go/internal/tools"
 )
 
@@ -28,6 +30,7 @@ type Server struct {
 	repoRoot string
 	registry *tools.Registry
 	toolMap  map[string]tools.ToolDef
+	session  *hints.Session
 	mu       sync.Mutex
 	writer   io.Writer
 	reader   io.Reader
@@ -45,6 +48,7 @@ func NewServer(store *graph.Store, repoRoot string) *Server {
 		repoRoot: repoRoot,
 		registry: reg,
 		toolMap:  toolMap,
+		session:  hints.NewSession(),
 		writer:   os.Stdout,
 		reader:   os.Stdin,
 	}
@@ -137,6 +141,10 @@ func (s *Server) handleRequest(ctx context.Context, req *jsonRPCRequest) {
 		s.handleToolsList(req)
 	case "tools/call":
 		s.handleToolsCall(ctx, req)
+	case "prompts/list":
+		s.handlePromptsList(req)
+	case "prompts/get":
+		s.handlePromptsGet(req)
 	case "ping":
 		s.writeResult(req.ID, map[string]any{})
 	default:
@@ -152,6 +160,9 @@ func (s *Server) handleInitialize(req *jsonRPCRequest) {
 		"protocolVersion": protocolVersion,
 		"capabilities": map[string]any{
 			"tools": map[string]any{
+				"listChanged": false,
+			},
+			"prompts": map[string]any{
 				"listChanged": false,
 			},
 		},
@@ -208,6 +219,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req *jsonRPCRequest) {
 		return
 	}
 
+	// Generate hints if result is a map
+	resultMap, isMap := result.(map[string]any)
+	if isMap && s.session != nil {
+		h := hints.GenerateHints(callParams.Name, resultMap, s.session)
+		resultMap["_hints"] = h
+	}
+
 	text, err := json.Marshal(result)
 	if err != nil {
 		s.writeResult(req.ID, map[string]any{
@@ -226,6 +244,66 @@ func (s *Server) handleToolsCall(ctx context.Context, req *jsonRPCRequest) {
 			"text": string(text),
 		}},
 	})
+}
+
+func (s *Server) handlePromptsList(req *jsonRPCRequest) {
+	allPrompts := prompts.AllPrompts()
+	defs := make([]map[string]any, len(allPrompts))
+	for i, p := range allPrompts {
+		def := map[string]any{
+			"name":        p.Name,
+			"description": p.Description,
+		}
+		if len(p.Arguments) > 0 {
+			args := make([]map[string]any, len(p.Arguments))
+			for j, a := range p.Arguments {
+				args[j] = map[string]any{
+					"name":        a.Name,
+					"description": a.Description,
+					"required":    a.Required,
+				}
+			}
+			def["arguments"] = args
+		}
+		defs[i] = def
+	}
+	s.writeResult(req.ID, map[string]any{"prompts": defs})
+}
+
+func (s *Server) handlePromptsGet(req *jsonRPCRequest) {
+	var getParams struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments"`
+	}
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &getParams); err != nil {
+			s.writeError(req.ID, -32602, "Invalid params", nil)
+			return
+		}
+	}
+
+	allPrompts := prompts.AllPrompts()
+	for _, p := range allPrompts {
+		if p.Name == getParams.Name {
+			messages := p.Handler(getParams.Arguments)
+			msgDicts := make([]map[string]any, len(messages))
+			for i, m := range messages {
+				msgDicts[i] = map[string]any{
+					"role": m.Role,
+					"content": map[string]any{
+						"type": "text",
+						"text": m.Content,
+					},
+				}
+			}
+			s.writeResult(req.ID, map[string]any{
+				"description": p.Description,
+				"messages":    msgDicts,
+			})
+			return
+		}
+	}
+	s.writeError(req.ID, -32602, fmt.Sprintf("Unknown prompt: %s", getParams.Name), nil)
 }
 
 func (s *Server) writeResult(id json.RawMessage, result any) {

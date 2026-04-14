@@ -12,6 +12,7 @@ import (
 
 	"github.com/harshsharma/code-review-graph-go/internal/flows"
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
+	"github.com/harshsharma/code-review-graph-go/internal/skills"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
 	"github.com/harshsharma/code-review-graph-go/internal/mcp"
 	"github.com/harshsharma/code-review-graph-go/internal/registry"
@@ -35,6 +36,8 @@ func main() {
 
 	root.AddCommand(
 		versionCmd(),
+		installCmd(),
+		initCmd(),
 		buildCmd(),
 		updateCmd(),
 		postprocessCmd(),
@@ -62,6 +65,42 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("code-review-graph %s\n", version)
 		},
 	}
+}
+
+func installCmd() *cobra.Command {
+	var platform string
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Full installation: MCP config, skills, hooks, git hook, CLAUDE.md",
+		Long:  "Install code-review-graph for all detected AI coding platforms. Sets up MCP server configs, skill files, hooks, git pre-commit hook, and CLAUDE.md integration.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRoot := incremental.FindProjectRoot("")
+			return skills.FullInstall(repoRoot, platform)
+		},
+	}
+	cmd.Flags().StringVar(&platform, "platform", "all", "Target platform (claude, cursor, windsurf, zed, continue, opencode, all)")
+	return cmd
+}
+
+func initCmd() *cobra.Command {
+	var platform string
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize MCP server configuration for detected platforms",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRoot := incremental.FindProjectRoot("")
+			fmt.Println("Configuring MCP server...")
+			configured := skills.InstallPlatformConfigs(repoRoot, platform, dryRun)
+			if len(configured) == 0 {
+				fmt.Println("No platforms detected.")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&platform, "platform", "all", "Target platform (claude, cursor, windsurf, zed, continue, opencode, all)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without writing")
+	return cmd
 }
 
 func buildCmd() *cobra.Command {
@@ -484,6 +523,8 @@ func banner() string {
 		r = "\033[0m"
 	}
 
+	cmd := func(name, desc string) string { return g + name + r + " " + d + desc + r }
+
 	return fmt.Sprintf(`
 %s  ●──●──●%s
 %s  │╲ │ ╱│%s       %scode-review-graph%s  %sv%s%s
@@ -492,26 +533,40 @@ func banner() string {
 %s  ●──●──●%s       %ssmarter code reviews%s
 
   %sCommands:%s
-    %sbuild%s         Full graph build %s(parse all files)%s
-    %supdate%s        Incremental update %s(changed files only)%s
-    %spostprocess%s   Trace execution flows %s(BFS, criticality)%s
-    %swatch%s         Auto-update on file changes
-    %sstatus%s        Show graph statistics
-    %svisualize%s     Generate interactive HTML graph
-    %sdetect-changes%s Analyze change impact %s(risk-scored review)%s
-    %swiki%s          Generate markdown wiki %s(from communities)%s
-    %sregister%s      Register repo in multi-repo registry
-    %sunregister%s    Remove repo from registry
-    %srepos%s         List registered repos
-    %sserve%s         Start MCP server %s(stdio transport)%s
-    %sversion%s       Show version
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
+    %s
 
   %sRun%s %scode-review-graph <command> --help%s %sfor details%s
 `, c, r, c, r, b, r, d, version, r, c, y, c, r, c, r, d, r, c, r, d, r,
-		g, r, d, r,
-		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r,
-		g, r, d, r, g, r, g, r, g, r,
-		g, r, d, r, g, r,
+		b, r,
+		cmd("install      ", "(MCP, skills, hooks, CLAUDE.md)"),
+		cmd("init         ", "(platform auto-detect)"),
+		cmd("build        ", "(parse all files)"),
+		cmd("update       ", "(changed files only)"),
+		cmd("postprocess  ", "(trace execution flows)"),
+		cmd("watch        ", "(auto-update on changes)"),
+		cmd("status       ", "(graph statistics)"),
+		cmd("visualize    ", "(interactive HTML graph)"),
+		cmd("detect-changes", "(risk-scored review)"),
+		cmd("wiki         ", "(markdown from communities)"),
+		cmd("register     ", "(add repo to registry)"),
+		cmd("unregister   ", "(remove repo from registry)"),
+		cmd("repos        ", "(list registered repos)"),
+		cmd("serve        ", "(MCP stdio transport)"),
+		cmd("version      ", ""),
 		d, r, b, r, d, r)
 }
 
