@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
+	"github.com/harshsharma/code-review-graph-go/internal/visualization"
 
 	"github.com/spf13/cobra"
 )
@@ -33,6 +36,7 @@ func main() {
 		statusCmd(),
 		watchCmd(),
 		detectChangesCmd(),
+		visualizeCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -249,6 +253,47 @@ func detectChangesCmd() *cobra.Command {
 	return cmd
 }
 
+func visualizeCmd() *cobra.Command {
+	var repoPath string
+	var serve bool
+	cmd := &cobra.Command{
+		Use:   "visualize",
+		Short: "Generate interactive HTML graph visualization",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+			repoRoot := incremental.FindProjectRoot(repoPath)
+			dbPath := incremental.GetDBPath(repoRoot)
+
+			store, err := graph.NewStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer store.Close()
+
+			dataDir := incremental.GetDataDir(repoRoot)
+			htmlPath := filepath.Join(dataDir, "graph.html")
+
+			if err := visualization.GenerateHTML(store, htmlPath); err != nil {
+				return fmt.Errorf("generating visualization: %w", err)
+			}
+
+			fmt.Printf("Visualization: %s\n", htmlPath)
+
+			if serve {
+				fmt.Printf("Serving at http://localhost:8765/graph.html\nPress Ctrl+C to stop.\n")
+				http.Handle("/", http.FileServer(http.Dir(dataDir)))
+				return http.ListenAndServe(":8765", nil)
+			}
+
+			fmt.Println("Open in browser to explore your codebase graph.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (auto-detected)")
+	cmd.Flags().BoolVar(&serve, "serve", false, "Start a local HTTP server (localhost:8765)")
+	return cmd
+}
+
 func setupLogging() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -287,12 +332,13 @@ func banner() string {
     %supdate%s      Incremental update %s(changed files only)%s
     %swatch%s       Auto-update on file changes
     %sstatus%s      Show graph statistics
+    %svisualize%s   Generate interactive HTML graph
     %sdetect-changes%s Analyze change impact %s(risk-scored review)%s
     %sversion%s     Show version
 
   %sRun%s %scode-review-graph <command> --help%s %sfor details%s
 `, c, r, c, r, b, r, d, version, r, c, y, c, r, c, r, d, r, c, r, d, r,
-		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, d, r, g, r,
+		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r, g, r,
 		d, r, b, r, d, r)
 }
 

@@ -759,12 +759,15 @@ func scanNode(row *sql.Row) (*GraphNode, error) {
 	n := &GraphNode{}
 	var extraStr string
 	var isTest int
+	var signature sql.NullString
+	var communityID sql.NullInt64
 	err := row.Scan(
 		&n.ID, &n.Kind, &n.Name, &n.QualifiedName, &n.FilePath,
 		&n.LineStart, &n.LineEnd, &n.Language, &n.ParentName,
 		&n.Params, &n.ReturnType,
 		new(sql.NullString), // modifiers
 		&isTest, &n.FileHash, &extraStr, new(float64), // updated_at
+		&signature, &communityID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -783,12 +786,15 @@ func scanNodes(rows *sql.Rows) ([]GraphNode, error) {
 		var n GraphNode
 		var extraStr string
 		var isTest int
+		var signature sql.NullString
+		var communityID sql.NullInt64
 		err := rows.Scan(
 			&n.ID, &n.Kind, &n.Name, &n.QualifiedName, &n.FilePath,
 			&n.LineStart, &n.LineEnd, &n.Language, &n.ParentName,
 			&n.Params, &n.ReturnType,
 			new(sql.NullString), // modifiers
 			&isTest, &n.FileHash, &extraStr, new(float64), // updated_at
+			&signature, &communityID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning node row: %w", err)

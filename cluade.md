@@ -33,7 +33,8 @@ This is a Go port of [code-review-graph](https://github.com/tirth8205/code-revie
 
 | Package | Path | Description |
 |---------|------|-------------|
-| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: build, update, status, watch, detect-changes, version |
+| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: build, update, status, watch, detect-changes, visualize, version |
+| **Visualization** | `internal/visualization/` | D3.js interactive HTML graph generator with force layout, search, tooltips |
 | **Config** | `internal/config/config.go` | Environment-driven configuration (CRG_* vars), limits, ignore patterns |
 | **Graph Store** | `internal/graph/` | SQLite-backed graph (nodes, edges, metadata), schema migrations v1→v6, BFS impact radius via recursive CTE, batch queries, FTS5 search |
 | **Parser** | `internal/parser/` | Tree-sitter multi-language AST parser (17 languages), WorkerPool for goroutine-parallel parsing |
@@ -233,9 +234,13 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [x] SanitizeName for prompt injection defence
 - [x] Binary file detection, symlink skip, ignore patterns
 
+- [x] D3.js interactive HTML visualization with dark theme, force-directed layout, search, tooltips, collapsible files, edge toggles, node filtering, detail panel
+- [x] `visualize` CLI command with optional `--serve` HTTP server
+- [x] Edge target resolution via name index (short names → qualified names)
+- [x] Test suite: 15 tests covering graph store CRUD, metadata, search, parser (Python, Go, JS), language detection, hashing, test function detection
+
 ### 🚧 Planned
 
-- [ ] D3.js interactive HTML visualization (`internal/visualization/`)
 - [ ] MCP server with stdio transport (`cmd/mcp-server/`)
 - [ ] MCP tool implementations (22 tools)
 - [ ] FTS5-powered search API (`internal/search/`)
@@ -244,6 +249,5 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [ ] Multi-repo registry (`internal/registry/`)
 - [ ] Execution flow tracing
 - [ ] Vector embeddings (optional)
-- [ ] Comprehensive test suite
 - [ ] CI pipeline (GitHub Actions)
 - [ ] GoReleaser for pre-built binaries
