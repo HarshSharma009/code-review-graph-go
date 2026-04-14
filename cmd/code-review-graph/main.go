@@ -10,10 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/harshsharma/code-review-graph-go/internal/flows"
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
 	"github.com/harshsharma/code-review-graph-go/internal/mcp"
+	"github.com/harshsharma/code-review-graph-go/internal/registry"
 	"github.com/harshsharma/code-review-graph-go/internal/visualization"
+	"github.com/harshsharma/code-review-graph-go/internal/wiki"
 
 	"github.com/spf13/cobra"
 )
@@ -34,10 +37,15 @@ func main() {
 		versionCmd(),
 		buildCmd(),
 		updateCmd(),
+		postprocessCmd(),
 		statusCmd(),
 		watchCmd(),
 		detectChangesCmd(),
 		visualizeCmd(),
+		wikiCmd(),
+		registerCmd(),
+		unregisterCmd(),
+		reposCmd(),
 		serveCmd(),
 	)
 
@@ -296,6 +304,135 @@ func visualizeCmd() *cobra.Command {
 	return cmd
 }
 
+func postprocessCmd() *cobra.Command {
+	var repoPath string
+	cmd := &cobra.Command{
+		Use:   "postprocess",
+		Short: "Run post-processing (trace flows, compute criticality)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+			repoRoot := incremental.FindProjectRoot(repoPath)
+			dbPath := incremental.GetDBPath(repoRoot)
+
+			store, err := graph.NewStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer store.Close()
+
+			allFlows, err := flows.TraceFlows(store, 15)
+			if err != nil {
+				return fmt.Errorf("tracing flows: %w", err)
+			}
+
+			count, err := flows.StoreFlows(store, allFlows)
+			if err != nil {
+				return fmt.Errorf("storing flows: %w", err)
+			}
+
+			fmt.Printf("Postprocess: %d execution flows traced and stored\n", count)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (auto-detected)")
+	return cmd
+}
+
+func wikiCmd() *cobra.Command {
+	var repoPath string
+	cmd := &cobra.Command{
+		Use:   "wiki",
+		Short: "Generate markdown wiki from community structure",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+			repoRoot := incremental.FindProjectRoot(repoPath)
+			dbPath := incremental.GetDBPath(repoRoot)
+
+			store, err := graph.NewStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer store.Close()
+
+			wikiDir := filepath.Join(incremental.GetDataDir(repoRoot), "wiki")
+			result, err := wiki.GenerateWiki(store, wikiDir)
+			if err != nil {
+				return fmt.Errorf("generating wiki: %w", err)
+			}
+
+			fmt.Printf("Wiki: %d generated, %d updated, %d unchanged\n",
+				result.PagesGenerated, result.PagesUpdated, result.PagesUnchanged)
+			fmt.Printf("Output: %s\n", wikiDir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (auto-detected)")
+	return cmd
+}
+
+func registerCmd() *cobra.Command {
+	var alias string
+	cmd := &cobra.Command{
+		Use:   "register <path>",
+		Short: "Register a repository in the multi-repo registry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reg := registry.New("")
+			entry, err := reg.Register(args[0], alias)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Registered: %s", entry.Path)
+			if entry.Alias != "" {
+				fmt.Printf(" (alias: %s)", entry.Alias)
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&alias, "alias", "", "Short alias for the repository")
+	return cmd
+}
+
+func unregisterCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unregister <path-or-alias>",
+		Short: "Remove a repository from the multi-repo registry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reg := registry.New("")
+			if reg.Unregister(args[0]) {
+				fmt.Println("Unregistered.")
+			} else {
+				fmt.Println("Not found in registry.")
+			}
+			return nil
+		},
+	}
+}
+
+func reposCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "repos",
+		Short: "List all registered repositories",
+		Run: func(cmd *cobra.Command, args []string) {
+			reg := registry.New("")
+			repos := reg.ListRepos()
+			if len(repos) == 0 {
+				fmt.Println("No repositories registered.")
+				return
+			}
+			for _, r := range repos {
+				if r.Alias != "" {
+					fmt.Printf("  %s (%s)\n", r.Path, r.Alias)
+				} else {
+					fmt.Printf("  %s\n", r.Path)
+				}
+			}
+		},
+	}
+}
+
 func serveCmd() *cobra.Command {
 	var repoPath string
 	cmd := &cobra.Command{
@@ -355,18 +492,26 @@ func banner() string {
 %s  ●──●──●%s       %ssmarter code reviews%s
 
   %sCommands:%s
-    %sbuild%s       Full graph build %s(parse all files)%s
-    %supdate%s      Incremental update %s(changed files only)%s
-    %swatch%s       Auto-update on file changes
-    %sstatus%s      Show graph statistics
-    %svisualize%s   Generate interactive HTML graph
+    %sbuild%s         Full graph build %s(parse all files)%s
+    %supdate%s        Incremental update %s(changed files only)%s
+    %spostprocess%s   Trace execution flows %s(BFS, criticality)%s
+    %swatch%s         Auto-update on file changes
+    %sstatus%s        Show graph statistics
+    %svisualize%s     Generate interactive HTML graph
     %sdetect-changes%s Analyze change impact %s(risk-scored review)%s
-    %sserve%s       Start MCP server %s(stdio transport)%s
-    %sversion%s     Show version
+    %swiki%s          Generate markdown wiki %s(from communities)%s
+    %sregister%s      Register repo in multi-repo registry
+    %sunregister%s    Remove repo from registry
+    %srepos%s         List registered repos
+    %sserve%s         Start MCP server %s(stdio transport)%s
+    %sversion%s       Show version
 
   %sRun%s %scode-review-graph <command> --help%s %sfor details%s
 `, c, r, c, r, b, r, d, version, r, c, y, c, r, c, r, d, r, c, r, d, r,
-		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r, g, r, d, r, g, r,
+		g, r, d, r,
+		b, r, g, r, d, r, g, r, d, r, g, r, g, r, g, r, g, r, d, r,
+		g, r, d, r, g, r, g, r, g, r,
+		g, r, d, r, g, r,
 		d, r, b, r, d, r)
 }
 

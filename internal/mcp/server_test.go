@@ -109,6 +109,14 @@ func TestToolsList(t *testing.T) {
 		"get_review_context",
 		"detect_changes",
 		"visualize_graph",
+		"list_flows",
+		"get_flow",
+		"get_affected_flows",
+		"refactor",
+		"apply_refactor",
+		"find_dead_code",
+		"generate_wiki",
+		"get_wiki_page",
 	}
 	for _, name := range required {
 		if !names[name] {

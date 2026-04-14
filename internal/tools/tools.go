@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
+	"github.com/harshsharma/code-review-graph-go/internal/flows"
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
+	"github.com/harshsharma/code-review-graph-go/internal/refactor"
 	"github.com/harshsharma/code-review-graph-go/internal/visualization"
+	"github.com/harshsharma/code-review-graph-go/internal/wiki"
 )
 
 // Registry holds all MCP tool definitions with their handlers.
@@ -42,6 +46,14 @@ func (r *Registry) AllTools() []ToolDef {
 		r.getReviewContextTool(),
 		r.detectChangesTool(),
 		r.visualizeTool(),
+		r.listFlowsTool(),
+		r.getFlowTool(),
+		r.getAffectedFlowsTool(),
+		r.refactorTool(),
+		r.applyRefactorTool(),
+		r.findDeadCodeTool(),
+		r.generateWikiTool(),
+		r.getWikiPageTool(),
 	}
 }
 
@@ -422,6 +434,216 @@ func (r *Registry) visualizeTool() ToolDef {
 				"html_path": htmlPath,
 				"message":   "Visualization generated. Open in browser to explore.",
 			}, nil
+		},
+	}
+}
+
+// --- Flow tools ---
+
+func (r *Registry) listFlowsTool() ToolDef {
+	return ToolDef{
+		Name:        "list_flows",
+		Description: "List execution flows in the codebase, sorted by criticality. Trace them first with build_or_update_graph if empty.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sort_by": map[string]any{"type": "string", "description": "Sort field (criticality, depth, node_count)", "default": "criticality"},
+				"limit":   map[string]any{"type": "integer", "description": "Max flows to return", "default": 50},
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			sortBy, _ := params["sort_by"].(string)
+			if sortBy == "" {
+				sortBy = "criticality"
+			}
+			limit := intParam(params, "limit", 50)
+			result, err := flows.GetFlows(r.store, sortBy, limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"flows": result, "count": len(result)}, nil
+		},
+	}
+}
+
+func (r *Registry) getFlowTool() ToolDef {
+	return ToolDef{
+		Name:        "get_flow",
+		Description: "Get detailed information about a single execution flow including step-by-step nodes.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"flow_id": map[string]any{"type": "integer", "description": "Flow ID"},
+			},
+			"required": []string{"flow_id"},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			flowID := int64(intParam(params, "flow_id", 0))
+			f, steps, err := flows.GetFlowByID(r.store, flowID)
+			if err != nil {
+				return nil, err
+			}
+			if f == nil {
+				return map[string]any{"error": "Flow not found"}, nil
+			}
+			return map[string]any{"flow": f, "steps": steps}, nil
+		},
+	}
+}
+
+func (r *Registry) getAffectedFlowsTool() ToolDef {
+	return ToolDef{
+		Name:        "get_affected_flows",
+		Description: "Find execution flows affected by changed files.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"changed_files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Changed file paths"},
+			},
+			"required": []string{"changed_files"},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			files, _ := toStringSlice(params["changed_files"])
+			affected, err := flows.GetAffectedFlows(r.store, files)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"affected_flows": affected, "total": len(affected)}, nil
+		},
+	}
+}
+
+// --- Refactor tools ---
+
+func (r *Registry) refactorTool() ToolDef {
+	return ToolDef{
+		Name:        "refactor",
+		Description: "Graph-powered refactoring. Supports: rename (preview edits), dead_code (find unused symbols), suggest (community-driven suggestions).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"operation": map[string]any{"type": "string", "enum": []string{"rename", "dead_code", "suggest"}, "description": "Refactoring operation"},
+				"old_name":  map[string]any{"type": "string", "description": "Current name (for rename)"},
+				"new_name":  map[string]any{"type": "string", "description": "New name (for rename)"},
+				"kind":      map[string]any{"type": "string", "description": "Node kind filter (for dead_code)"},
+			},
+			"required": []string{"operation"},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			op, _ := params["operation"].(string)
+			switch op {
+			case "rename":
+				oldName, _ := params["old_name"].(string)
+				newName, _ := params["new_name"].(string)
+				if oldName == "" || newName == "" {
+					return nil, fmt.Errorf("old_name and new_name required for rename")
+				}
+				preview, err := refactor.RenamePreview(r.store, oldName, newName)
+				if err != nil {
+					return nil, err
+				}
+				return preview, nil
+			case "dead_code":
+				kind, _ := params["kind"].(string)
+				dead, err := refactor.FindDeadCode(r.store, kind, "")
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"dead_code": dead, "count": len(dead)}, nil
+			case "suggest":
+				suggestions, err := refactor.SuggestRefactorings(r.store)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"suggestions": suggestions, "count": len(suggestions)}, nil
+			default:
+				return nil, fmt.Errorf("unknown operation: %s", op)
+			}
+		},
+	}
+}
+
+func (r *Registry) applyRefactorTool() ToolDef {
+	return ToolDef{
+		Name:        "apply_refactor",
+		Description: "Apply a previously previewed refactoring to source files. Use dry_run=true to see diffs without writing.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"refactor_id": map[string]any{"type": "string", "description": "ID from a prior refactor rename preview"},
+				"dry_run":     map[string]any{"type": "boolean", "description": "If true, show diffs without applying", "default": false},
+			},
+			"required": []string{"refactor_id"},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			refactorID, _ := params["refactor_id"].(string)
+			dryRun, _ := params["dry_run"].(bool)
+			result := refactor.ApplyRefactor(refactorID, r.repoRoot, dryRun)
+			return result, nil
+		},
+	}
+}
+
+func (r *Registry) findDeadCodeTool() ToolDef {
+	return ToolDef{
+		Name:        "find_dead_code",
+		Description: "Find functions and classes with no callers, test references, or importers.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"kind":         map[string]any{"type": "string", "description": "Node kind filter (Function, Class)"},
+				"file_pattern": map[string]any{"type": "string", "description": "File path substring filter"},
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			kind, _ := params["kind"].(string)
+			filePattern, _ := params["file_pattern"].(string)
+			dead, err := refactor.FindDeadCode(r.store, kind, filePattern)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"dead_code": dead, "count": len(dead)}, nil
+		},
+	}
+}
+
+// --- Wiki tools ---
+
+func (r *Registry) generateWikiTool() ToolDef {
+	return ToolDef{
+		Name:        "generate_wiki",
+		Description: "Generate a markdown wiki from the code community structure.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			wikiDir := filepath.Join(incremental.GetDataDir(r.repoRoot), "wiki")
+			result, err := wiki.GenerateWiki(r.store, wikiDir)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		},
+	}
+}
+
+func (r *Registry) getWikiPageTool() ToolDef {
+	return ToolDef{
+		Name:        "get_wiki_page",
+		Description: "Retrieve a specific wiki page by community name.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"page_name": map[string]any{"type": "string", "description": "Community name to look up"},
+			},
+			"required": []string{"page_name"},
+		},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			pageName, _ := params["page_name"].(string)
+			wikiDir := filepath.Join(incremental.GetDataDir(r.repoRoot), "wiki")
+			content, err := wiki.GetWikiPage(wikiDir, pageName)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"content": content}, nil
 		},
 	}
 }
