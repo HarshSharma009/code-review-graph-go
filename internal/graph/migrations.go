@@ -177,7 +177,8 @@ func migrateV5(db *sql.DB, _ *sql.Tx) error {
 			content='nodes', content_rowid='rowid',
 			tokenize='porter unicode61'
 		)`); err != nil {
-			return fmt.Errorf("creating FTS5 table: %w", err)
+			slog.Warn("migration v5: FTS5 not available, search will use keyword fallback", "err", err)
+			return nil
 		}
 		slog.Info("migration v5: created nodes_fts FTS5 virtual table")
 	}

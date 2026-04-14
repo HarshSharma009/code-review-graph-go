@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/harshsharma/code-review-graph-go/internal/embeddings"
 	"github.com/harshsharma/code-review-graph-go/internal/flows"
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
 	"github.com/harshsharma/code-review-graph-go/internal/refactor"
+	"github.com/harshsharma/code-review-graph-go/internal/search"
 	"github.com/harshsharma/code-review-graph-go/internal/visualization"
 	"github.com/harshsharma/code-review-graph-go/internal/wiki"
 )
@@ -19,6 +21,7 @@ import (
 type Registry struct {
 	store    *graph.Store
 	repoRoot string
+	EmbStore *embeddings.Store
 }
 
 func NewRegistry(store *graph.Store, repoRoot string) *Registry {
@@ -54,6 +57,7 @@ func (r *Registry) AllTools() []ToolDef {
 		r.findDeadCodeTool(),
 		r.generateWikiTool(),
 		r.getWikiPageTool(),
+		r.rebuildFTSIndexTool(),
 	}
 }
 
@@ -223,28 +227,25 @@ func (r *Registry) queryGraphTool() ToolDef {
 func (r *Registry) semanticSearchNodesTool() ToolDef {
 	return ToolDef{
 		Name:        "semantic_search_nodes",
-		Description: "Search for code entities by name or keyword. Returns matching nodes with their metadata.",
+		Description: "Hybrid search for code entities combining FTS5 BM25, vector embeddings (RRF merge), and keyword fallback. Supports kind filtering and context-file boosting.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Search query"},
-				"limit": map[string]any{"type": "integer", "description": "Maximum results", "default": 20},
+				"query":         map[string]any{"type": "string", "description": "Search query"},
+				"kind":          map[string]any{"type": "string", "description": "Node kind filter (Function, Class, Type, File, Test)"},
+				"limit":         map[string]any{"type": "integer", "description": "Maximum results", "default": 20},
+				"context_files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Boost results in these files"},
 			},
 			"required": []string{"query"},
 		},
 		Handler: func(ctx context.Context, params map[string]any) (any, error) {
 			query, _ := params["query"].(string)
+			kind, _ := params["kind"].(string)
 			limit := intParam(params, "limit", 20)
+			contextFiles, _ := toStringSlice(params["context_files"])
 
-			nodes, err := r.store.SearchNodes(query, limit)
-			if err != nil {
-				return nil, err
-			}
-			result := make([]map[string]any, len(nodes))
-			for i, n := range nodes {
-				result[i] = graph.NodeToDict(n)
-			}
-			return map[string]any{"nodes": result, "count": len(nodes)}, nil
+			results := search.HybridSearch(r.store, query, kind, limit, contextFiles, r.EmbStore)
+			return map[string]any{"results": results, "count": len(results)}, nil
 		},
 	}
 }
@@ -644,6 +645,23 @@ func (r *Registry) getWikiPageTool() ToolDef {
 				return nil, err
 			}
 			return map[string]any{"content": content}, nil
+		},
+	}
+}
+
+// --- Search tools ---
+
+func (r *Registry) rebuildFTSIndexTool() ToolDef {
+	return ToolDef{
+		Name:        "rebuild_fts_index",
+		Description: "Rebuild the FTS5 full-text search index from the nodes table. Run after large graph updates for optimal search.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		Handler: func(ctx context.Context, params map[string]any) (any, error) {
+			count, err := search.RebuildFTSIndex(r.store)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"indexed_rows": count, "message": "FTS index rebuilt successfully"}, nil
 		},
 	}
 }

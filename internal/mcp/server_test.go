@@ -117,6 +117,7 @@ func TestToolsList(t *testing.T) {
 		"find_dead_code",
 		"generate_wiki",
 		"get_wiki_page",
+		"rebuild_fts_index",
 	}
 	for _, name := range required {
 		if !names[name] {

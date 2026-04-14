@@ -33,10 +33,11 @@ This is a Go port of [code-review-graph](https://github.com/tirth8205/code-revie
 
 | Package | Path | Description |
 |---------|------|-------------|
-| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: install, init, build, update, postprocess, status, watch, detect-changes, visualize, wiki, register, unregister, repos, serve, version |
+| **CLI** | `cmd/code-review-graph/main.go` | Cobra CLI: install, init, build, update, postprocess, status, watch, detect-changes, search, visualize, wiki, register, unregister, repos, serve, version |
 | **Visualization** | `internal/visualization/` | D3.js interactive HTML graph generator with force layout, search, tooltips |
 | **Config** | `internal/config/config.go` | Environment-driven configuration (CRG_* vars), limits, ignore patterns |
-| **Graph Store** | `internal/graph/` | SQLite-backed graph (nodes, edges, metadata), schema migrations v1→v6, BFS impact radius via recursive CTE, batch queries, FTS5 search |
+| **Graph Store** | `internal/graph/` | SQLite-backed graph (nodes, edges, metadata), schema migrations v1→v6, BFS impact radius via recursive CTE, batch queries |
+| **Search** | `internal/search/` | Hybrid search: FTS5 BM25, vector embedding similarity, Reciprocal Rank Fusion merge, query-kind boosting (PascalCase→Class, snake_case→Function), context-file boosting, keyword LIKE fallback |
 | **Parser** | `internal/parser/` | Tree-sitter multi-language AST parser (17 languages), WorkerPool for goroutine-parallel parsing |
 | **Incremental** | `internal/incremental/` | Git-based change detection, file collection, hash-based skip logic, dependent file expansion, fsnotify file watcher |
 | **Flows** | `internal/flows/` | Execution flow detection via BFS, entry-point detection (framework decorators + name patterns), criticality scoring |
@@ -108,6 +109,7 @@ CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" go build -o bin/code-review-grap
 ./bin/code-review-graph status                      # Show graph stats
 ./bin/code-review-graph watch                       # fsnotify-based watch mode
 ./bin/code-review-graph detect-changes [--brief]    # Risk-scored change impact
+./bin/code-review-graph search <query> [--kind]      # Hybrid FTS5+embeddings+keyword search
 ./bin/code-review-graph postprocess                 # Trace execution flows
 ./bin/code-review-graph wiki                        # Generate markdown wiki
 ./bin/code-review-graph register <path> [--alias]   # Register repo
@@ -177,8 +179,11 @@ code-review-graph-go/
 │   ├── mcp/                 # MCP JSON-RPC server (stdio transport)
 │   │   ├── server.go
 │   │   └── server_test.go
-│   ├── tools/               # MCP tool handlers (18 tools)
+│   ├── tools/               # MCP tool handlers (19 tools)
 │   │   └── tools.go
+│   ├── search/              # Hybrid search engine (FTS5 + embeddings + RRF)
+│   │   ├── search.go
+│   │   └── search_test.go
 │   ├── flows/               # Execution flow detection + criticality
 │   │   └── flows.go
 │   ├── wiki/                # Markdown wiki from communities
@@ -262,7 +267,7 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [x] fsnotify file watcher with 300ms debounce
 - [x] BFS blast-radius via SQLite recursive CTE
 - [x] Batch node/edge queries with SQLite variable limit safety
-- [x] FTS5 keyword search table
+- [x] FTS5 keyword search table (migration v5, soft-fail if FTS5 unavailable)
 - [x] Cobra CLI: build, update, status, watch, detect-changes, version
 - [x] Colored banner with terminal detection
 - [x] SanitizeName for prompt injection defence
@@ -281,12 +286,14 @@ github.com/fsnotify/fsnotify            # Cross-platform file watching
 - [x] Refactor engine: rename preview (definition + call/import sites), dead code detection (filters entry points via decorators/names), community-driven move suggestions, apply with path-traversal safety, expiry enforcement
 - [x] Vector embeddings: provider interface, SQLite blob storage, cosine similarity search, encode/decode float32 vectors, semantic search with keyword fallback
 - [x] Multi-repo registry: JSON-based registry at ~/.code-review-graph/registry.json, register/unregister/list/find-by-alias/find-by-path, cross-repo search
-- [x] 18 MCP tools: original 10 + list_flows, get_flow, get_affected_flows, refactor, apply_refactor, find_dead_code, generate_wiki, get_wiki_page
+- [x] 19 MCP tools: original 10 + list_flows, get_flow, get_affected_flows, refactor, apply_refactor, find_dead_code, generate_wiki, get_wiki_page, rebuild_fts_index
 - [x] CLI commands: postprocess, wiki, register, unregister, repos
 - [x] Skills: multi-platform MCP config installer (6 platforms), 4 skill markdown files, hooks config, git pre-commit hook, CLAUDE.md injection, platform instruction files
 - [x] 5 MCP prompt templates: review_changes, architecture_map, debug_issue, onboard_developer, pre_merge_check
 - [x] Context-aware hints: session state tracking, intent inference, workflow-driven next-step suggestions appended as `_hints` to tool responses
 - [x] CLI commands: install (full setup), init (MCP config only)
+- [x] Hybrid search engine (`internal/search/`): FTS5 BM25 full-text search, vector embedding similarity via embeddings store, Reciprocal Rank Fusion (RRF) merge, query-kind boosting (PascalCase→Class/Type, snake_case→Function, dotted→qualified name), context-file boosting (1.5x), keyword LIKE fallback, batch node fetching, `rebuild_fts_index` MCP tool, `search` CLI command with `--kind`, `--limit`, `--rebuild-index` flags
+- [x] Search test suite: 7 tests covering keyword fallback, kind filtering, context-file boosting, empty query, boost detection, RRF merge, FTS5 index rebuild
 
 ### 🚧 Planned
 - [ ] Community detection algorithm (`internal/community/`)

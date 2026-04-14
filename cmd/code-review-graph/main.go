@@ -12,10 +12,11 @@ import (
 
 	"github.com/harshsharma/code-review-graph-go/internal/flows"
 	"github.com/harshsharma/code-review-graph-go/internal/graph"
-	"github.com/harshsharma/code-review-graph-go/internal/skills"
 	"github.com/harshsharma/code-review-graph-go/internal/incremental"
 	"github.com/harshsharma/code-review-graph-go/internal/mcp"
 	"github.com/harshsharma/code-review-graph-go/internal/registry"
+	"github.com/harshsharma/code-review-graph-go/internal/search"
+	"github.com/harshsharma/code-review-graph-go/internal/skills"
 	"github.com/harshsharma/code-review-graph-go/internal/visualization"
 	"github.com/harshsharma/code-review-graph-go/internal/wiki"
 
@@ -44,6 +45,7 @@ func main() {
 		statusCmd(),
 		watchCmd(),
 		detectChangesCmd(),
+		searchCmd(),
 		visualizeCmd(),
 		wikiCmd(),
 		registerCmd(),
@@ -302,6 +304,52 @@ func detectChangesCmd() *cobra.Command {
 	return cmd
 }
 
+func searchCmd() *cobra.Command {
+	var repoPath, kind string
+	var limit int
+	var rebuildIndex bool
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Hybrid search (FTS5 BM25 + embeddings + keyword fallback)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+			query := strings.Join(args, " ")
+			repoRoot := incremental.FindProjectRoot(repoPath)
+			dbPath := incremental.GetDBPath(repoRoot)
+
+			store, err := graph.NewStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer store.Close()
+
+			if rebuildIndex {
+				count, err := search.RebuildFTSIndex(store)
+				if err != nil {
+					return fmt.Errorf("rebuilding FTS index: %w", err)
+				}
+				fmt.Printf("FTS index rebuilt: %d rows\n", count)
+			}
+
+			results := search.HybridSearch(store, query, kind, limit, nil, nil)
+			if len(results) == 0 {
+				fmt.Println("No results found.")
+				return nil
+			}
+
+			out, _ := json.MarshalIndent(results, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (auto-detected)")
+	cmd.Flags().StringVar(&kind, "kind", "", "Filter by node kind (Function, Class, Type, File, Test)")
+	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum results")
+	cmd.Flags().BoolVar(&rebuildIndex, "rebuild-index", false, "Rebuild FTS5 index before searching")
+	return cmd
+}
+
 func visualizeCmd() *cobra.Command {
 	var repoPath string
 	var serve bool
@@ -548,6 +596,7 @@ func banner() string {
     %s
     %s
     %s
+    %s
 
   %sRun%s %scode-review-graph <command> --help%s %sfor details%s
 `, c, r, c, r, b, r, d, version, r, c, y, c, r, c, r, d, r, c, r, d, r,
@@ -561,6 +610,7 @@ func banner() string {
 		cmd("status       ", "(graph statistics)"),
 		cmd("visualize    ", "(interactive HTML graph)"),
 		cmd("detect-changes", "(risk-scored review)"),
+		cmd("search       ", "(hybrid FTS5+embeddings)"),
 		cmd("wiki         ", "(markdown from communities)"),
 		cmd("register     ", "(add repo to registry)"),
 		cmd("unregister   ", "(remove repo from registry)"),
